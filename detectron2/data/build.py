@@ -239,6 +239,7 @@ def get_detection_dataset_dicts(
     if isinstance(names, str):
         names = [names]
     assert len(names), names
+    logger = logging.getLogger(__name__)
 
     available_datasets = DatasetCatalog.keys()
     names_set = set(names)
@@ -288,7 +289,37 @@ def get_detection_dataset_dicts(
             pass
 
     assert len(dataset_dicts), "No valid data found in {}.".format(",".join(names))
+    _maybe_report_audit_overview(names, logger)
     return dataset_dicts
+
+
+def _maybe_report_audit_overview(names, logger) -> None:
+    """Surface a pre-computed duplicate/leakage overview at the data entry point.
+
+    This is a side-channel: it never changes the returned dataset dicts, the
+    registered functions or the metadata used for loading.  It is a complete
+    no-op unless the opt-in environment variable is set AND an overview file
+    exists, so the default data registration and loading behaviour is
+    unchanged.
+    """
+    try:
+        from .audit.loader_bridge import attach_overview_to_metadata, audit_enabled
+    except Exception:  # the audit package is optional
+        return
+    if not audit_enabled():
+        return
+    for name in names:
+        overview = attach_overview_to_metadata(name)
+        if overview is None:
+            logger.warning(
+                "Audit overview requested for '%s' but none was found (see "
+                "DETECTRON2_AUDIT_REPORT_DIR).", name
+            )
+            continue
+        if overview.get("duplicate_clusters") or overview.get("leakage_clusters"):
+            logger.warning("Audit overview for '%s': %s", name, overview.get("headline", ""))
+        else:
+            logger.info("Audit overview for '%s': no duplicates or split leakage", name)
 
 
 def build_batch_data_loader(
